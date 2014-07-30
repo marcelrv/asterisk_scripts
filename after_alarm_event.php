@@ -449,7 +449,7 @@ class ademcoEventParser {
 
         var $callerId="Alarm Report <80>";
 
-        function setEventsDir($dir) {
+         function setEventsDir($dir) {
                 $this->eventsDir=$dir;
         }
 
@@ -556,7 +556,6 @@ class ademcoEventParser {
                         }
 
                 }
-
                 //send email report but not for door open/close
                 if (is_array($this->actionChannelsMail[$e["id"]]) AND substr($e["e"],0,2) !="40") {
                                 $subject ="[". $this->eventCategory($e) . "] ".$this->eventDescription($e);
@@ -564,6 +563,8 @@ class ademcoEventParser {
                                 $this->sendMail($subject,$name,$email,$this->emailFromName,$this->emailFrom,$msg . "\n". $techmsg. "\nSMS:\n".$sms);
                         }
                 }
+                //Log events to MQTT sever
+                $this->logMQTT($e);
         }
 
         function createCallFile($channel) {
@@ -594,8 +595,16 @@ class ademcoEventParser {
                 $callFile.='Data: dongle0,'.$GSMnr.',"'.$sms.'"\n';
                 file_put_contents($this->callFileDir.uniqid("alarm").".sms.",$callFile);
                 */
+                if (substr($GSMnr, 0,1) == "W"){
+                $GSMnr = substr($GSMnr, 1) ;
+                $smscmd = "/root/yowsup/src/yowsup-cli -c /root/yowsup/src/my.conf -s " . $GSMnr . " '" .$sms. "'" ;
+                //echo $smscmd;
+                exec ($smscmd);
+                }
+                else {
                 $smscmd = 'dongle sms dongle0 '. $GSMnr . ' " ' .$sms. ' " ' ;
                 exec ("asterisk -rx '".$smscmd. "'");
+                }
                 }
         function getSavedEvent () {
                 $lastEvent=@file_get_contents($this->eventsDir.$this->lastEventSave);
@@ -627,9 +636,42 @@ class ademcoEventParser {
                 syslog(LOG_NOTICE,implode(", ",$metadata).", ".$event.", ".$string.", ".implode(", ",$e).", ".$this->eventDescription($e));
         }
         function log($metadata,$event,$string,$e) {
-                $logLine=implode(", ",$metadata).", ".$event.", ".$string.", ".implode(", ",$e).", ". $this->eventDescription($e)."\n";
+                $logLine=implode(", ",$metadata).", ".$event.", ".$string.", ".implode(", ",$e).", ". $this->eventDescription($e) ." (" . $this->eventQualifier[$e["q"]]." @ " . $this->zoneCodesDescription($e) ." )". "\n";
                 file_put_contents($this->eventsLogdir.$this->eventsLogFile,$logLine,FILE_APPEND);
         }
+
+        //function logMQTT($metadata,$event,$string,$e) {
+        function logMQTT($e) {
+        $mqtt = new phpMQTT("127.0.0.1", 1883, "Alarm PHP MQTT Client");
+        if ($mqtt->connect()) {
+                        $mqm=date("d.m.Y H:i:s",time()).". ";
+                        $mqm.=$this->eventCategory($e)." - ";
+                        $mqm.=$this->eventDescription($e)." (". $e["e"] . ") ";
+
+                        $mqm.="Sensor: " ;
+                        $mqm.=$this->zoneCodesDescription($e)."";
+
+                        if((intval($e["e"]) < 200) && (intval($e["q"]) == 1) ){
+                        $mqtt->publish("/alarm/lastalarm",$mqm,1,1);
+                        $mqtt->proc();
+                        }
+                        $mqtt->publish("/alarm/lastevent",$mqm,1,1);
+                        if ( (intval($e["e"]) == 401)) {
+                        //$mqtt->disconnect();
+                        sleep(1);
+                        $mqtt->proc();
+                        $mqtt->publish("/alarm/switchtime",date("d.m.Y H:i:s",time()),1,1);
+                        sleep(1);
+                        if ($mqtt->proc()) {
+                        if((intval($e["q"]) == 1) )     {
+                                        $mqtt->publish("/alarm/state","OFF",1,1);
+                                        }
+                                else
+                                        $mqtt->publish("/alarm/state","ON",1,1);
+                        }}
+        $mqtt->close();
+                }
+    }
 
         function parse($file) {
                 $fp=fopen($this->eventsDir.$file,"r");
@@ -716,3 +758,4 @@ $aep->getEventFiles();
 $aep->loop();
 
 ?>
+-
