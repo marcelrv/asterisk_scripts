@@ -1,5 +1,8 @@
 #!/usr/bin/php -q
 <?php
+/*if using mqtt */
+require("phpMQTT.php");
+
 /*
 Simple Alarm call center script. This script can by used as after script for Asterisks AlarmReceiver cmd.
 
